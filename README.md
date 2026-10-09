@@ -1,20 +1,20 @@
 # Project Framework
 
-一个可直接扩展的前后端分离工程骨架：Go 与 Gin 提供 HTTP API，React、TypeScript 与 Vite 提供页面。当前通过 `GET /healthz` 展示前后端连接状态。
+一个前后端分离的 Go 工作流编排工程：用 Go 实现并注册节点，用 YAML 定义 DAG，通过 Web 控制台查看和编辑流程草稿、测试运行，并通过 HTTP 执行已加载版本。后端使用 Gin，前端使用 React、TypeScript 与 Vite。
 
 ## 当前能力
 
 | 模块 | 入口 | 能力 |
 | --- | --- | --- |
-| 后端 | `backend/cmd/server/main.go` | 健康检查、请求 ID、结构化日志、异常恢复和优雅停机 |
-| 前端 | `frontend/src/main.tsx` | 展示后端检查中、连接成功和不可用状态 |
+| 后端 | `backend/cmd/server/main.go` | 工作流加载编译、节点目录、草稿校验、DAG 执行、运行记录、请求 ID、结构化日志、异常恢复和优雅停机 |
+| 前端 | `frontend/src/main.tsx` | 流程列表、节点目录、React Flow 画布、草稿编辑与测试运行面板 |
 | 验证 | 根目录 `Makefile` | 统一执行后端测试与前端完整检查 |
 
 ## 快速开始
 
 环境要求：Go 1.25+、Node.js `^22.13.0` 或 `>=24.0.0`、npm。
 
-先启动后端：
+先启动后端（默认加载 `backend/workflows` 下的样例）：
 
 ```bash
 cd backend
@@ -29,7 +29,7 @@ npm install
 npm run dev
 ```
 
-打开 Vite 输出的本地地址。开发服务器会把 `/healthz` 代理到 `http://localhost:8080`；也可以直接检查后端：
+打开 Vite 输出的本地地址。开发服务器会把 `/healthz`、`/readyz` 和 `/api` 代理到 `http://localhost:8080`。也可以直接检查后端：
 
 ```bash
 curl http://localhost:8080/healthz
@@ -41,14 +41,25 @@ curl http://localhost:8080/healthz
 
 ```text
 project-framework/
-├── backend/          # Go HTTP API
+├── backend/          # Go HTTP API 与工作流引擎
+│   ├── api/          # OpenAPI 契约
+│   ├── internal/
+│   │   ├── handler/  # Gin 路由、DTO 与错误映射
+│   │   ├── service/  # 用例门面
+│   │   ├── workflow/ # 纯领域引擎（加载、编译、执行）
+│   │   ├── nodes/    # 样例节点注册
+│   │   └── jsonvalue/# 精确数字解析
+│   └── workflows/    # 工作流 YAML
 ├── frontend/         # React Web 应用
+│   └── src/
+│       ├── api/      # 后端请求与契约类型
+│       └── pages/    # 控制台页面
 ├── AGENTS.md         # 跨目录开发规则
 ├── Makefile          # 统一验证入口
 └── README.md         # 项目入口
 ```
 
-后端以 `cmd/server` 为唯一装配入口，运行时调用保持 `handler -> service -> infra`；前端页面通过 `src/api` 访问后端。没有真实需求时，不预先增加数据库、RPC、全局状态或通用抽象层。
+后端以 `cmd/server` 为唯一装配入口，运行时调用保持 `handler -> service -> infra`，领域逻辑位于 `internal/workflow`；前端页面通过 `src/api` 访问后端。
 
 ## 详细文档
 

@@ -1,0 +1,46 @@
+apiVersion: workflow/v1
+workflowId: order-investigation
+definitionVersion: "1"
+title: 订单聚合排查（内置样例）
+inputSchema:
+  type: object
+  additionalProperties: false
+  required: [orderId]
+  properties:
+    orderId: {type: string, minLength: 1}
+outputSchema:
+  type: object
+  additionalProperties: false
+  required: [consistent, issues]
+  properties:
+    consistent: {type: boolean}
+    issues: {type: array, items: {type: string}}
+nodes:
+  - id: validate-input
+    type: demo.order.validate
+    typeVersion: "1"
+    config: {}
+    inputs:
+      orderId: {kind: workflowInput, field: orderId}
+  - id: read-order
+    type: demo.order.read
+    typeVersion: "1"
+    config: {}
+    inputs:
+      orderId: {kind: nodeOutput, nodeId: validate-input, field: orderId}
+  - id: read-delivery
+    type: demo.delivery.read
+    typeVersion: "1"
+    config: {}
+    inputs:
+      orderId: {kind: nodeOutput, nodeId: validate-input, field: orderId}
+  - id: aggregate
+    type: demo.order.aggregate
+    typeVersion: "1"
+    config: {}
+    inputs:
+      order: {kind: nodeOutput, nodeId: read-order, field: order}
+      delivery: {kind: nodeOutput, nodeId: read-delivery, field: delivery}
+outputs:
+  consistent: {kind: nodeOutput, nodeId: aggregate, field: consistent}
+  issues: {kind: nodeOutput, nodeId: aggregate, field: issues}

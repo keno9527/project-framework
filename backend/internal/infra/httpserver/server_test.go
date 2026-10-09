@@ -21,7 +21,7 @@ func TestRunServesHealthAndStopsOnCancellation(t *testing.T) {
 	}
 
 	logger := discardLogger()
-	server := New("", time.Second, handler.NewRouter(logger, health.New()), logger)
+	server := New("", time.Second, handler.NewRouter(logger, health.New(), nil), logger)
 	if server.httpServer.ReadHeaderTimeout != readHeaderTimeout {
 		t.Fatalf("ReadHeaderTimeout = %s, want %s", server.httpServer.ReadHeaderTimeout, readHeaderTimeout)
 	}
@@ -75,7 +75,7 @@ func TestRunReturnsListenerError(t *testing.T) {
 	}
 
 	logger := discardLogger()
-	server := New("", time.Second, handler.NewRouter(logger, health.New()), logger)
+	server := New("", time.Second, handler.NewRouter(logger, health.New(), nil), logger)
 	if err := server.Run(context.Background(), listener); err == nil {
 		t.Fatal("Run() error = nil, want listener error")
 	}

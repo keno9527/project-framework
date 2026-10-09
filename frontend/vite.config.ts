@@ -12,11 +12,14 @@ export default defineConfig({
   server: {
     proxy: {
       '/healthz': 'http://localhost:8080',
+      '/readyz': 'http://localhost:8080',
+      '/api': 'http://localhost:8080',
     },
   },
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     css: true,
+    restoreMocks: true,
   },
 })

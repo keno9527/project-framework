@@ -7,9 +7,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"project-framework/internal/service/health"
+	wfservice "project-framework/internal/service/workflow"
 )
 
-func NewRouter(logger *slog.Logger, healthService *health.Service) http.Handler {
+func NewRouter(logger *slog.Logger, healthService *health.Service, workflowService *wfservice.Service) http.Handler {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.Use(
@@ -19,6 +20,8 @@ func NewRouter(logger *slog.Logger, healthService *health.Service) http.Handler 
 	)
 
 	router.GET("/healthz", healthHandler(healthService))
+	registerWorkflowRoutes(router, workflowService)
+
 	router.NoRoute(func(c *gin.Context) {
 		writeAPIError(c, http.StatusNotFound, "not_found", "resource not found")
 	})

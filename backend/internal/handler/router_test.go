@@ -16,7 +16,7 @@ import (
 )
 
 func TestHealthEndpointReturnsServiceStatus(t *testing.T) {
-	router := NewRouter(discardLogger(), health.New())
+	router := NewRouter(discardLogger(), health.New(), newTestWorkflowService(t))
 	response := performRequest(router, http.MethodGet, "/healthz", "")
 
 	if response.Code != http.StatusOK {
@@ -34,21 +34,21 @@ func TestHealthEndpointReturnsServiceStatus(t *testing.T) {
 }
 
 func TestRouterReturnsStableNotFoundError(t *testing.T) {
-	router := NewRouter(discardLogger(), health.New())
+	router := NewRouter(discardLogger(), health.New(), newTestWorkflowService(t))
 	response := performRequest(router, http.MethodGet, "/missing", "request-123")
 
 	assertAPIError(t, response, http.StatusNotFound, "not_found", "resource not found", "request-123")
 }
 
 func TestRouterReturnsStableMethodNotAllowedError(t *testing.T) {
-	router := NewRouter(discardLogger(), health.New())
+	router := NewRouter(discardLogger(), health.New(), newTestWorkflowService(t))
 	response := performRequest(router, http.MethodPost, "/healthz", "request-123")
 
 	assertAPIError(t, response, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "request-123")
 }
 
 func TestRequestIDMiddlewarePreservesIncomingID(t *testing.T) {
-	router := NewRouter(discardLogger(), health.New())
+	router := NewRouter(discardLogger(), health.New(), newTestWorkflowService(t))
 	response := performRequest(router, http.MethodGet, "/healthz", "request-123")
 
 	if got := response.Header().Get(requestIDHeader); got != "request-123" {
@@ -57,7 +57,7 @@ func TestRequestIDMiddlewarePreservesIncomingID(t *testing.T) {
 }
 
 func TestRequestIDMiddlewareGeneratesMissingID(t *testing.T) {
-	router := NewRouter(discardLogger(), health.New())
+	router := NewRouter(discardLogger(), health.New(), newTestWorkflowService(t))
 	response := performRequest(router, http.MethodGet, "/healthz", "")
 
 	if got := response.Header().Get(requestIDHeader); got == "" {

@@ -1,0 +1,148 @@
+.run-panel {
+  background: #fff;
+  border-top: 1px solid var(--border, #dce4dc);
+  padding: 24px;
+  min-width: 0;
+}
+.run-panel-heading,
+.run-result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.run-panel h2 {
+  margin: 5px 0 8px;
+  font-size: 19px;
+}
+.run-panel h3 {
+  margin: 16px 0 10px;
+  font-size: 14px;
+}
+.run-input-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+}
+.run-input {
+  width: 100%;
+  min-height: 130px;
+  padding: 12px;
+  resize: vertical;
+  border: 1px solid #cbd9cf;
+  border-radius: 6px;
+  color: #264a3e;
+  background: #f8faf8;
+  font: 12px/1.7 monospace;
+}
+.run-input:focus-visible {
+  outline: 2px solid #608675;
+  outline-offset: 2px;
+}
+.run-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.run-actions .run-primary {
+  color: white;
+  background: #2e6451;
+  border-color: #2e6451;
+}
+.run-panel .run-primary:hover:not(:disabled) {
+  color: white;
+  background: #24513f;
+  border-color: #24513f;
+}
+.run-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.run-error {
+  color: #a33932;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.run-error .text-button {
+  margin-left: 12px;
+}
+.run-result {
+  margin-top: 20px;
+  padding-top: 8px;
+  border-top: 1px solid #e1e8e0;
+}
+.run-result > p {
+  overflow-wrap: anywhere;
+}
+.run-status {
+  display: inline-block;
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  background: #eef1ed;
+  color: #627060;
+}
+.run-succeeded {
+  background: #dfefe5;
+  color: #286349;
+}
+.run-running,
+.run-retry_wait {
+  background: #e5edf8;
+  color: #385f97;
+}
+.run-failed,
+.run-timed_out {
+  background: #fae9e6;
+  color: #a33932;
+}
+.run-stale {
+  background: #fcf6df;
+  padding: 10px;
+  font-size: 12px;
+  color: #806221;
+}
+.run-table-scroll {
+  overflow-x: auto;
+  margin: 16px 0;
+}
+.run-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+.run-table th,
+.run-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #e6ece4;
+  vertical-align: top;
+}
+.run-table th {
+  color: #62745f;
+  font-weight: 500;
+}
+.run-table small {
+  display: block;
+}
+.run-panel details {
+  font-size: 11px;
+  margin-top: 5px;
+}
+.run-panel summary {
+  cursor: pointer;
+  color: #62745f;
+}
+@media (max-width: 640px) {
+  .run-panel {
+    padding: 16px;
+  }
+  .run-panel .run-table td,
+  .run-panel .run-table th {
+    padding: 8px 5px;
+  }
+}

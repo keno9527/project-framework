@@ -1,0 +1,46 @@
+apiVersion: workflow/v1
+workflowId: text-demo
+definitionVersion: "1"
+title: 文本处理示例
+inputSchema:
+  type: object
+  additionalProperties: false
+  required: [text]
+  properties:
+    text: {type: string}
+outputSchema:
+  type: object
+  additionalProperties: false
+  required: [upper, lower]
+  properties:
+    upper: {type: string}
+    lower: {type: string}
+nodes:
+  - id: normalize
+    type: text.normalize
+    typeVersion: "1"
+    config: {trim: true}
+    inputs:
+      text: {kind: workflowInput, field: text}
+  - id: upper
+    type: text.upper
+    typeVersion: "1"
+    config: {}
+    inputs:
+      text: {kind: nodeOutput, nodeId: normalize, field: text}
+  - id: lower
+    type: text.lower
+    typeVersion: "1"
+    config: {}
+    inputs:
+      text: {kind: nodeOutput, nodeId: normalize, field: text}
+  - id: merge
+    type: text.merge
+    typeVersion: "1"
+    config: {}
+    inputs:
+      upper: {kind: nodeOutput, nodeId: upper, field: text}
+      lower: {kind: nodeOutput, nodeId: lower, field: text}
+outputs:
+  upper: {kind: nodeOutput, nodeId: merge, field: upper}
+  lower: {kind: nodeOutput, nodeId: merge, field: lower}

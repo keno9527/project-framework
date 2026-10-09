@@ -1,0 +1,696 @@
+openapi: 3.1.0
+info:
+  title: Workflow DIY V1 API
+  version: 0.2.0
+  description: |
+    Developer-facing discovery and execution API for immutable, versioned DAGs.
+    Definitions load atomically at process startup. Loaded-version execution uses
+    an exact workflow version; there is no implicit latest version. Draft endpoints
+    validate and test submitted definitions without writing files or publishing to
+    the loaded catalog. Both execution paths use the same compiler and engine.
+    Runs and results are in memory and disappear on restart. Active runs and the
+    most recent 100 terminal runs are retained by the default server settings.
+    This API is intended for localhost or an isolated test environment and does
+    not implement authentication. Do not expose it publicly without access controls.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default local server
+security: []
+tags:
+  - name: Health
+  - name: Discovery
+  - name: Drafts
+  - name: Runs
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [Health]
+      summary: Check process liveness
+      responses:
+        '200':
+          description: Process is serving HTTP.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [status]
+                    properties:
+                      status: {type: string, const: ok}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags: [Health]
+      summary: Check whether definitions are loaded and new runs are accepted
+      responses:
+        '200':
+          description: Ready; includes the identity of the ephemeral engine instance.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [status, instanceId]
+                    properties:
+                      status: {type: string, const: ready}
+                      instanceId: {type: string}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '503': {$ref: '#/components/responses/NotReady'}
+  /api/v1/node-types:
+    get:
+      operationId: listNodeTypes
+      tags: [Discovery]
+      summary: List registered node types in stable type/version order
+      responses:
+        '200':
+          description: Node descriptors, independent of any single workflow.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/NodeDescriptor'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+  /api/v1/workflows:
+    get:
+      operationId: listWorkflows
+      tags: [Discovery]
+      summary: List loaded workflow versions in stable ID/version order
+      responses:
+        '200':
+          description: Loaded definitions only; no cross-restart history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/WorkflowSummary'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+  /api/v1/workflows/{workflowId}/versions/{definitionVersion}:
+    parameters:
+      - $ref: '#/components/parameters/WorkflowId'
+      - $ref: '#/components/parameters/DefinitionVersion'
+    get:
+      operationId: getWorkflowVersion
+      tags: [Discovery]
+      summary: Read the compiled graph and its exact node descriptor snapshots
+      description: |
+        The graph is the same normalized dependency graph used for execution.
+        Nodes include effective timeout/retry policies. Repeated node types are
+        deduplicated in nodeTypes; instance IDs remain distinct. Known sensitive
+        configuration keys and literal input fields are replaced with [REDACTED],
+        including sensitive keys nested within literal objects and arrays.
+        This endpoint supplies no coordinates and always returns the loaded version,
+        independent of browser drafts. Clients can use its definition fields as an
+        editor starting point; compiled edges and nodeTypes must not be submitted.
+      responses:
+        '200':
+          description: Immutable, read-only workflow view.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: '#/components/schemas/WorkflowView'}
+        '404': {$ref: '#/components/responses/WorkflowNotFound'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+  /api/v1/workflows/validate:
+    post:
+      operationId: validateDraft
+      tags: [Drafts]
+      summary: Compile a draft and return its normalized graph and exportable YAML
+      description: |
+        Does not execute nodes, change the loaded catalog, or write configuration
+        files. The request is limited to 2 MiB; both its canonical JSON definition
+        and the resulting exported YAML must fit within 1 MiB. Duplicate JSON
+        keys, unknown definition fields, mixed binding
+        fields, explicit zero policies, unsupported schemas, unresolved references,
+        cycles and [REDACTED] placeholder values are rejected. Omitted timeout/retry
+        values use the same defaults as startup YAML loading. The returned view
+        redacts known sensitive field names. Exported YAML retains submitted values;
+        credentials belong in the node's environment or secret service.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ValidateDraftRequest'}
+      responses:
+        '200':
+          description: Valid definition, normalized graph and deterministic YAML export.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [view, yaml]
+                    properties:
+                      view: {$ref: '#/components/schemas/WorkflowView'}
+                      yaml: {type: string, description: Validated definition with effective policies.}
+        '400': {$ref: '#/components/responses/InvalidRequest'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/DefinitionInvalid'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/NotReady'}
+  /api/v1/test-runs:
+    post:
+      operationId: startTestRun
+      tags: [Drafts, Runs]
+      summary: Compile and asynchronously execute a submitted draft snapshot
+      description: |
+        Uses registered Go handlers and makes real business calls. It does not
+        register, save or publish the draft. The request is limited to 2 MiB, its
+        canonical JSON definition to 1 MiB, and canonical input to 256 KiB. All
+        draft-validation rules apply. Input validation and admission failures do
+        not create runs. Accepted work owns the submitted snapshot; later browser
+        edits have no effect. It shares capacity, timeouts, retention and shutdown
+        behavior with loaded-version runs. The request is not idempotent and must
+        not be retried blindly when acceptance is unknown.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StartTestRunRequest'}
+      responses:
+        '202':
+          description: Draft run accepted; poll Location for its current snapshot.
+          headers:
+            Location:
+              description: Relative URL of the accepted run snapshot.
+              required: true
+              schema: {type: string, examples: [/api/v1/runs/0123456789abcdef0123456789abcdef]}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunResponse'}
+        '400': {$ref: '#/components/responses/InvalidRequest'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422':
+          description: DEFINITION_INVALID or INPUT_INVALID; no run was created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '429': {$ref: '#/components/responses/CapacityExceeded'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/NotReady'}
+  /api/v1/runs:
+    post:
+      operationId: startRun
+      tags: [Runs]
+      summary: Validate input and asynchronously execute an exact workflow version
+      description: |
+        The JSON request and the canonical JSON representation of its input are
+        each limited to 256 KiB. JSON escaping can make normalized input larger
+        than the original request. Validation or admission failures
+        do not create runs. Accepted work belongs to the server lifecycle and
+        continues when the HTTP client disconnects. The response is an actual
+        snapshot and may already be terminal. This endpoint is not idempotent;
+        do not blindly retry a request whose acceptance is unknown.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StartRunRequest'}
+            example:
+              workflowId: text-demo
+              definitionVersion: '1'
+              input: {text: ' Hello '}
+      responses:
+        '202':
+          description: Run accepted; poll Location for its current snapshot.
+          headers:
+            Location:
+              description: Relative URL of the accepted run snapshot.
+              required: true
+              schema: {type: string, examples: [/api/v1/runs/0123456789abcdef0123456789abcdef]}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunResponse'}
+        '400': {$ref: '#/components/responses/InvalidRequest'}
+        '404': {$ref: '#/components/responses/WorkflowNotFound'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/InputInvalid'}
+        '429': {$ref: '#/components/responses/CapacityExceeded'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/NotReady'}
+  /api/v1/runs/{runId}:
+    parameters:
+      - name: runId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+    get:
+      operationId: getRun
+      tags: [Runs]
+      summary: Read an ephemeral run snapshot
+      description: |
+        Execution failure is returned as a successful HTTP query with a terminal
+        run status and structured execution error. Intermediate input/output
+        payloads are not exposed. Unknown, evicted and previous-instance run IDs
+        are all reported as RUN_NOT_FOUND.
+      responses:
+        '200':
+          description: Current or terminal snapshot; output is available only on success.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunResponse'}
+        '404': {$ref: '#/components/responses/RunNotFound'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+components:
+  parameters:
+    WorkflowId:
+      name: workflowId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Identifier'}
+    DefinitionVersion:
+      name: definitionVersion
+      in: path
+      required: true
+      description: Exact loaded definition version; no implicit latest alias.
+      schema: {type: string, minLength: 1}
+  responses:
+    InvalidRequest:
+      description: INVALID_REQUEST — malformed JSON, invalid outer request fields, missing required fields or multiple JSON values. Draft endpoints also reject duplicate JSON keys.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    WorkflowNotFound:
+      description: WORKFLOW_NOT_FOUND — the exact workflow version is not loaded.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    RunNotFound:
+      description: RUN_NOT_FOUND — absent, evicted or previous-instance run.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    MethodNotAllowed:
+      description: METHOD_NOT_ALLOWED — endpoint does not support this HTTP method.
+      headers:
+        Allow:
+          schema: {type: string}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    PayloadTooLarge:
+      description: PAYLOAD_TOO_LARGE — request, canonical JSON definition or input exceeds the limit specified by this endpoint.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InputInvalid:
+      description: INPUT_INVALID — input does not match the workflow input schema.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    DefinitionInvalid:
+      description: DEFINITION_INVALID — draft fields, schemas, node references, bindings or execution policies are invalid; no run was created.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    CapacityExceeded:
+      description: CAPACITY_EXCEEDED — active-run capacity is full; no run was created.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    NotReady:
+      description: NOT_READY — service is shutting down and rejects new runs.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InternalError:
+      description: INTERNAL_ERROR — unexpected server error.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+  schemas:
+    Identifier:
+      type: string
+      pattern: '^[A-Za-z][A-Za-z0-9-]*$'
+    JSONObject:
+      type: object
+      additionalProperties: true
+    ErrorResponse:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              enum: [INVALID_REQUEST, NOT_FOUND, WORKFLOW_NOT_FOUND, RUN_NOT_FOUND, METHOD_NOT_ALLOWED, PAYLOAD_TOO_LARGE, DEFINITION_INVALID, INPUT_INVALID, CAPACITY_EXCEEDED, NOT_READY, INTERNAL_ERROR]
+            message: {type: string}
+    V1Schema:
+      type: object
+      required: [type]
+      additionalProperties: false
+      description: |
+        Restricted JSON Schema 2020-12 vocabulary. Keywords must match their
+        declared type; arrays require homogeneous items; object required entries
+        must name declared properties. Root input/config/output schemas are objects.
+        Fields are bound at the top level only. Defaults are descriptive and never
+        applied automatically. Boolean schemas, null types, references, composition
+        and unsupported keywords are rejected during registration or compilation.
+        Numeric literals in schemas and data must be at most 1024 bytes long,
+        have an absolute exponent no greater than 1024, and convert to a finite
+        float64 before exact rational validation is performed. This bounds numeric
+        parsing work while preserving comparisons beyond float64 integer precision.
+      properties:
+        $schema: {type: string, const: 'https://json-schema.org/draft/2020-12/schema'}
+        type:
+          type: string
+          enum: [object, array, string, number, integer, boolean]
+        title: {type: string}
+        description: {type: string}
+        default: {}
+        enum:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {}
+        properties:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/V1Schema'}
+        required:
+          type: array
+          uniqueItems: true
+          items: {type: string}
+        additionalProperties: {type: boolean, const: false}
+        items: {$ref: '#/components/schemas/V1Schema'}
+        minLength: {type: integer, minimum: 0}
+        maxLength: {type: integer, minimum: 0}
+        minItems: {type: integer, minimum: 0}
+        maxItems: {type: integer, minimum: 0}
+        minimum: {type: number}
+        maximum: {type: number}
+        exclusiveMinimum: {type: number}
+        exclusiveMaximum: {type: number}
+    UIHints:
+      type: object
+      properties:
+        iconKey: {type: string}
+        fieldOrder: {type: array, items: {type: string}}
+        advanced: {type: array, items: {type: string}}
+    NodeDescriptor:
+      type: object
+      required: [type, typeVersion, title, description, category, configSchema, inputSchema, outputSchema, retrySafe]
+      properties:
+        type: {type: string, pattern: '^[A-Za-z][A-Za-z0-9_.-]*$'}
+        typeVersion: {type: string, minLength: 1}
+        title: {type: string, minLength: 1}
+        description: {type: string, minLength: 1}
+        category: {type: string, minLength: 1}
+        configSchema: {$ref: '#/components/schemas/V1Schema'}
+        inputSchema: {$ref: '#/components/schemas/V1Schema'}
+        outputSchema: {$ref: '#/components/schemas/V1Schema'}
+        retrySafe: {type: boolean}
+        uiHints: {$ref: '#/components/schemas/UIHints'}
+    Binding:
+      oneOf:
+        - type: object
+          required: [kind, value]
+          additionalProperties: false
+          properties:
+            kind: {type: string, const: literal}
+            value: {}
+        - type: object
+          required: [kind, field]
+          additionalProperties: false
+          properties:
+            kind: {type: string, const: workflowInput}
+            field: {type: string, minLength: 1}
+        - type: object
+          required: [kind, nodeId, field]
+          additionalProperties: false
+          properties:
+            kind: {type: string, const: nodeOutput}
+            nodeId: {$ref: '#/components/schemas/Identifier'}
+            field: {type: string, minLength: 1}
+      description: References name literal top-level fields, never path expressions.
+    RetryPolicy:
+      type: object
+      required: [maxAttempts, backoffMs]
+      properties:
+        maxAttempts:
+          type: integer
+          minimum: 1
+          maximum: 3
+          default: 1
+          description: Includes the initial attempt. Values above 1 require retrySafe.
+        backoffMs:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          default: 200
+    WorkflowNode:
+      type: object
+      required: [id, type, typeVersion, config, inputs, timeoutMs, retry]
+      properties:
+        id: {$ref: '#/components/schemas/Identifier'}
+        type: {type: string}
+        typeVersion: {type: string}
+        title: {type: string}
+        config:
+          $ref: '#/components/schemas/JSONObject'
+          description: Node configuration; known sensitive keys are redacted in queries.
+        inputs:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/Binding'}
+        dependsOn:
+          type: array
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/Identifier'}
+        timeoutMs: {type: integer, minimum: 1, maximum: 120000, default: 30000}
+        retry: {$ref: '#/components/schemas/RetryPolicy'}
+    DraftNode:
+      type: object
+      additionalProperties: false
+      required: [id, type, typeVersion]
+      description: |
+        A node instance using an exact registered type/version. Omitted or null
+        config/inputs normalize to empty objects, then must satisfy the descriptor.
+        Execution policy fields may be omitted but cannot be zero or null.
+      properties:
+        id: {$ref: '#/components/schemas/Identifier'}
+        type: {type: string, minLength: 1}
+        typeVersion: {type: string, minLength: 1}
+        title: {type: string}
+        config:
+          type: [object, 'null']
+          additionalProperties: true
+        inputs:
+          type: [object, 'null']
+          additionalProperties: {$ref: '#/components/schemas/Binding'}
+        dependsOn:
+          type: [array, 'null']
+          items: {$ref: '#/components/schemas/Identifier'}
+        timeoutMs: {type: integer, minimum: 1, maximum: 120000, default: 30000}
+        retry:
+          type: object
+          additionalProperties: false
+          properties:
+            maxAttempts:
+              type: integer
+              minimum: 1
+              maximum: 3
+              default: 1
+              description: Includes the initial attempt; values above 1 require retrySafe.
+            backoffMs: {type: integer, minimum: 1, maximum: 10000, default: 200}
+    WorkflowDefinition:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, workflowId, definitionVersion, title, inputSchema, outputSchema, nodes]
+      description: |
+        An editable definition. Excludes compiled edges and nodeTypes. Identifiers
+        describe this draft and do not overwrite a loaded version. Outputs are
+        required when the output schema declares required properties.
+      properties:
+        apiVersion: {type: string, const: workflow/v1}
+        workflowId: {$ref: '#/components/schemas/Identifier'}
+        definitionVersion: {type: string, minLength: 1}
+        title: {type: string, minLength: 1}
+        inputSchema: {$ref: '#/components/schemas/V1Schema'}
+        outputSchema: {$ref: '#/components/schemas/V1Schema'}
+        nodes:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: {$ref: '#/components/schemas/DraftNode'}
+        outputs:
+          type: [object, 'null']
+          additionalProperties: {$ref: '#/components/schemas/Binding'}
+    ValidateDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [definition]
+      properties:
+        definition: {$ref: '#/components/schemas/WorkflowDefinition'}
+    StartTestRunRequest:
+      type: object
+      additionalProperties: false
+      required: [definition, input]
+      properties:
+        definition: {$ref: '#/components/schemas/WorkflowDefinition'}
+        input: {$ref: '#/components/schemas/JSONObject'}
+    DependencyEdge:
+      type: object
+      required: [id, source, target, reasons, mappings]
+      properties:
+        id: {type: string, description: Stable dependency identity within this version.}
+        source: {$ref: '#/components/schemas/Identifier'}
+        target: {$ref: '#/components/schemas/Identifier'}
+        reasons:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string, enum: [data, explicit]}
+        mappings:
+          type: array
+          items:
+            type: object
+            required: [sourceField, targetField]
+            properties:
+              sourceField: {type: string}
+              targetField: {type: string}
+    WorkflowSummary:
+      type: object
+      required: [workflowId, definitionVersion, title, nodeCount]
+      properties:
+        workflowId: {$ref: '#/components/schemas/Identifier'}
+        definitionVersion: {type: string}
+        title: {type: string}
+        nodeCount: {type: integer, minimum: 1, maximum: 50}
+    WorkflowView:
+      type: object
+      required: [apiVersion, workflowId, definitionVersion, title, inputSchema, outputSchema, nodes, outputs, edges, nodeTypes]
+      properties:
+        apiVersion: {type: string, const: workflow/v1}
+        workflowId: {$ref: '#/components/schemas/Identifier'}
+        definitionVersion: {type: string}
+        title: {type: string}
+        inputSchema: {$ref: '#/components/schemas/V1Schema'}
+        outputSchema: {$ref: '#/components/schemas/V1Schema'}
+        nodes:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: {$ref: '#/components/schemas/WorkflowNode'}
+        outputs:
+          type: [object, 'null']
+          additionalProperties: {$ref: '#/components/schemas/Binding'}
+        edges:
+          type: array
+          maxItems: 200
+          items: {$ref: '#/components/schemas/DependencyEdge'}
+        nodeTypes:
+          type: array
+          items: {$ref: '#/components/schemas/NodeDescriptor'}
+    StartRunRequest:
+      type: object
+      required: [workflowId, definitionVersion, input]
+      additionalProperties: false
+      properties:
+        workflowId: {type: string, minLength: 1}
+        definitionVersion: {type: string, minLength: 1}
+        input: {$ref: '#/components/schemas/JSONObject'}
+    RunResponse:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: '#/components/schemas/RunSnapshot'}
+    RunStatus:
+      type: string
+      enum: [PENDING, RUNNING, SUCCEEDED, FAILED, TIMED_OUT, CANCELLED]
+    NodeStatus:
+      type: string
+      enum: [PENDING, RUNNING, RETRY_WAIT, SUCCEEDED, FAILED, TIMED_OUT, CANCELLED, SKIPPED]
+    ExecutionError:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        nodeId: {type: string}
+        attempt: {type: integer, minimum: 1}
+    AttemptSnapshot:
+      type: object
+      required: [attempt, status, startedAt]
+      properties:
+        attempt: {type: integer, minimum: 1, maximum: 3}
+        status:
+          type: string
+          enum: [RUNNING, SUCCEEDED, FAILED, TIMED_OUT, CANCELLED]
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time}
+        error: {$ref: '#/components/schemas/ExecutionError'}
+    NodeSnapshot:
+      type: object
+      required: [nodeId, nodeExecutionId, status, attempt, attempts]
+      properties:
+        nodeId: {$ref: '#/components/schemas/Identifier'}
+        nodeExecutionId:
+          type: string
+          description: Stable across retries of the same logical node execution.
+        status: {$ref: '#/components/schemas/NodeStatus'}
+        attempt:
+          type: integer
+          minimum: 0
+          maximum: 3
+          description: Zero until the first physical attempt starts.
+        attempts:
+          type: array
+          items: {$ref: '#/components/schemas/AttemptSnapshot'}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time}
+        error: {$ref: '#/components/schemas/ExecutionError'}
+    RunSnapshot:
+      type: object
+      required: [runId, workflowId, definitionVersion, status, instanceId, ephemeral, nodes, createdAt]
+      properties:
+        runId: {type: string}
+        workflowId: {$ref: '#/components/schemas/Identifier'}
+        definitionVersion: {type: string}
+        status: {$ref: '#/components/schemas/RunStatus'}
+        instanceId: {type: string}
+        ephemeral: {type: boolean, const: true}
+        output:
+          $ref: '#/components/schemas/JSONObject'
+          description: Always present for SUCCEEDED runs (including an empty object); omitted for all other statuses.
+        nodes:
+          type: array
+          items: {$ref: '#/components/schemas/NodeSnapshot'}
+        createdAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time}
+        error: {$ref: '#/components/schemas/ExecutionError'}

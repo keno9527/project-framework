@@ -1,5 +1,5 @@
-import { HomePage } from '@/pages/home'
+import { WorkflowConsole } from '@/pages/workflow'
 
 export default function App() {
-  return <HomePage />
+  return <WorkflowConsole />
 }
